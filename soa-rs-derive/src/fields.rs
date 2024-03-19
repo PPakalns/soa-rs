@@ -81,6 +81,7 @@ pub fn fields_struct(
     let slices_mut = format_ident!("{ident}SlicesMut");
     let array = format_ident!("{ident}Array");
     let raw = format_ident!("{ident}SoaRaw");
+    let utils_ident = format_ident!("{ident}_soa_utils");
 
     let mut out = TokenStream::new();
 
@@ -256,7 +257,7 @@ pub fn fields_struct(
                     #(
                         #ident_all: {
                             let ptr = self.#ident_all.as_slice().as_ptr().cast_mut();
-                            unsafe { ::std::ptr::NonNull::new_unchecked(ptr) }
+                            unsafe { ::std::ptr::NonNull::new_unchecked(ptr) }.into()
                         },
                     )*
                 };
@@ -269,7 +270,7 @@ pub fn fields_struct(
                     #(
                         #ident_all: {
                             let ptr = self.#ident_all.as_mut_slice().as_mut_ptr();
-                            unsafe { ::std::ptr::NonNull::new_unchecked(ptr) }
+                            unsafe { ::std::ptr::NonNull::new_unchecked(ptr) }.into()
                         },
                     )*
                 };
@@ -281,7 +282,7 @@ pub fn fields_struct(
 
     let indices = std::iter::repeat(()).enumerate().map(|(i, ())| i);
     let offsets_len = fields_len - 1;
-    let raw_body = define(&|ty| quote! { ::std::ptr::NonNull<#ty> });
+    let raw_body = define(&|ty| quote! { #utils_ident::SoaNonNull<#ty> });
 
     let layout_and_offsets_body = |checked: bool| {
         let check = if checked {
@@ -325,6 +326,54 @@ pub fn fields_struct(
 
     out.append_all(quote! {
         #[automatically_derived]
+        #[allow(non_snake_case_name)]
+        mod #utils_ident {
+            /// Non null ptr wrapper that implements
+            /// `std::maerker::Sync` if pointed data is `std::marker::Sync`.
+            ///
+            /// TODO: Implement Sync, Send traits on #raw
+            /// when trivial constraints are allowed in where clauses.
+            /// https://github.com/rust-lang/rust/issues/48214
+            pub(super) struct SoaNonNull<T>(::std::ptr::NonNull<T>);
+
+            unsafe impl<T> ::std::marker::Sync for SoaNonNull<T> where T: Sync {}
+            unsafe impl<T> ::std::marker::Send for SoaNonNull<T> where T: Send {}
+
+            impl<T> Clone for SoaNonNull<T>
+                where ::std::ptr::NonNull<T>: Clone
+            {
+                fn clone(&self) -> Self {
+                    self.0.clone().into()
+                }
+            }
+            impl<T> Copy for SoaNonNull<T>
+                where ::std::ptr::NonNull<T>: Copy
+            {}
+
+            impl<T> std::ops::Deref for SoaNonNull<T> {
+                type Target = std::ptr::NonNull<T>;
+
+                #[inline]
+                fn deref(&self) -> &Self::Target {
+                    &self.0
+                }
+            }
+
+            impl<T> ::std::ops::DerefMut for SoaNonNull<T> {
+                fn deref_mut(&mut self) -> &mut Self::Target {
+                    &mut self.0
+                }
+            }
+
+            impl<T> From<::std::ptr::NonNull<T>> for SoaNonNull<T> {
+                fn from(value: ::std::ptr::NonNull<T>) -> Self {
+                    Self(value)
+                }
+            }
+
+        }
+
+        #[automatically_derived]
         #[derive(Copy, Clone)]
         #vis struct #raw #raw_body
 
@@ -360,11 +409,11 @@ pub fn fields_struct(
             #[inline]
             unsafe fn with_offsets(ptr: *mut u8, offsets: [usize; #offsets_len]) -> Self {
                 Self {
-                    #ident_head: ::std::ptr::NonNull::new_unchecked(ptr.cast()),
+                    #ident_head: ::std::ptr::NonNull::new_unchecked(ptr.cast()).into(),
                     #(
                     #ident_tail: ::std::ptr::NonNull::new_unchecked(
                         ptr.add(offsets[#indices]).cast(),
-                    )
+                    ).into()
                     ),*
                 }
             }
@@ -377,7 +426,7 @@ pub fn fields_struct(
             #[inline]
             fn dangling() -> Self {
                 Self {
-                    #(#ident_all: ::std::ptr::NonNull::dangling(),)*
+                    #(#ident_all: ::std::ptr::NonNull::dangling().into(),)*
                 }
             }
 
@@ -514,7 +563,7 @@ pub fn fields_struct(
                     #(
                     #ident_all: ::std::ptr::NonNull::new_unchecked(
                         self.#ident_all.as_ptr().add(count)
-                    ),
+                    ).into(),
                     )*
                 }
             }
