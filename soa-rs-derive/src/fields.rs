@@ -365,8 +365,9 @@ pub fn fields_struct(
             impl<T> Clone for SoaNonNull<T>
                 where ::std::ptr::NonNull<T>: Clone
             {
+                #[inline(always)]
                 fn clone(&self) -> Self {
-                    self.0.clone().into()
+                    *self
                 }
             }
             impl<T> Copy for SoaNonNull<T>
@@ -383,12 +384,14 @@ pub fn fields_struct(
             }
 
             impl<T> ::std::ops::DerefMut for SoaNonNull<T> {
+                #[inline]
                 fn deref_mut(&mut self) -> &mut Self::Target {
                     &mut self.0
                 }
             }
 
             impl<T> From<::std::ptr::NonNull<T>> for SoaNonNull<T> {
+                #[inline]
                 fn from(value: ::std::ptr::NonNull<T>) -> Self {
                     Self(value)
                 }
